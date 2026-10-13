@@ -1,7 +1,6 @@
 import logging
 
 from homeassistant.components.button import ButtonEntity
-from homeassistant.core import callback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import COORDINATOR, DOMAIN
@@ -11,12 +10,12 @@ _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
     coordinator = hass.data[DOMAIN][COORDINATOR]
-    scene_buttons = []
-
-    for scene in coordinator.data["scenes"]:
-        scene_buttons.append(VirtualSceneButton(coordinator, scene.name, scene.id))
+    scene_buttons = [
+        VirtualSceneButton(coordinator, scene.name, scene.id)
+        for scene in coordinator.data["scenes"]
+    ]
     async_add_entities(scene_buttons)
-    _LOGGER.info(f"{len(scene_buttons)} buttons initialized")
+    _LOGGER.info("%s buttons initialized", len(scene_buttons))
 
 
 class VirtualSceneButton(CoordinatorEntity, ButtonEntity):
@@ -27,9 +26,4 @@ class VirtualSceneButton(CoordinatorEntity, ButtonEntity):
 
     async def async_press(self):
         await self.coordinator.activate_scene(self._attr_unique_id)
-        _LOGGER.info(f"Scene '{self._attr_name}' triggered")
-
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        """Handle updated data from the coordinator."""
-        super()._handle_coordinator_update()
+        _LOGGER.info("Scene '%s' triggered", self._attr_name)

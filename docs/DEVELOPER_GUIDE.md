@@ -21,12 +21,13 @@
 核心链路：
 
 1. `custom_components/ha_moorgen_home/config_flow.py` 接收 host/port 配置
-2. `custom_components/ha_moorgen_home/__init__.py` 初始化 coordinator 并加载 `button` / `light` 平台
+2. `custom_components/ha_moorgen_home/__init__.py` 初始化 coordinator 并加载 `button` / `climate` / `cover` / `light` / `sensor` 平台
 3. `custom_components/ha_moorgen_home/core/coordinator.py` 周期刷新数据（10s）并协调首次同步策略
 4. `custom_components/ha_moorgen_home/core/refresh_scheduler.py` 负责操作后刷新调度（1/2/4s）、合并与节流（>=1s）
 5. `custom_components/ha_moorgen_home/core/socket_client.py` 维护 TCP 连接、收发包
 6. `custom_components/ha_moorgen_home/core/protocol/*` 负责协议模型、编解码、命令构造
 7. `custom_components/ha_moorgen_home/button.py` 将场景映射为按钮实体并触发执行
+8. `light.py` / `climate.py` / `cover.py` / `sensor.py` 将灯、空调、窗帘、空调温度映射为实体；每个物理设备注册为 HA 设备，并按 `Device_Desc` 中的房间 ID 设置 `suggested_area`
 
 ---
 
@@ -37,7 +38,10 @@
 - `__init__.py`：集成入口与卸载
 - `config_flow.py`：UI 配置流程
 - `button.py`：ButtonEntity 实现（场景触发）
-- `light.py`：LightEntity 实现（普通灯开/关）
+- `light.py`：LightEntity 实现（普通灯开/关、调光灯亮度）
+- `climate.py`：ClimateEntity 实现（空调开关、模式、风速、设定温度）
+- `cover.py`：CoverEntity 实现（窗帘开/关/停/定位）
+- `sensor.py`：空调室温、设定温度传感器
 - `const.py`：全局常量（`DOMAIN`、`COORDINATOR`）
 - `core/coordinator.py`：DataUpdateCoordinator 逻辑
 - `core/socket_client.py`：连接生命周期、重连策略、收发包
@@ -54,6 +58,9 @@
 
 - 普通连接异常：不在 socket 层快速死循环重连；等待下次 coordinator 刷新触发按需连接。
 - 服务端主动断开（`ServerDisconnectedError`）：进入冷却期（默认 600 秒）。
+- 心跳：网关每约 10 秒下发 `6/13`，约 60 秒收不到 `6/14` 回应即断开连接；`_read_loop` 收到后立即回应（见 `docs/protocol/keepalive.md`）。
+- 实测网关允许多个客户端同时连接。
+- 刷新时网关不可达（`ConnectionError`，含冷却期）会抛出 `UpdateFailed`，各实体随之显示为不可用，而不是继续展示旧状态。
 - 冷却时间可在 `custom_components/ha_moorgen_home/core/socket_client.py` 的 `_kick_cooldown_seconds` 调整。
 
 目的：避免调试期间 HA 频繁抢占连接。
@@ -104,6 +111,7 @@ pytest -q
 ## 7. 数据刷新与同步策略
 
 - 兜底刷新：`DataUpdateCoordinator.update_interval = 10s`。
+- 设备详情可能分多个包下发，`route` 暂存直到收到 `REQUEST_DATA_OVER(148)` 才更新 `devices` 并递增 `device_version`（见 `query_device_details.md` 附录 A）。
 - 首次刷新（`async_config_entry_first_refresh`）：
   - 发送 `query_scene_details` + `query_device_details`
   - 等待 `scene_version` / `device_version` 变化后返回数据
@@ -117,8 +125,12 @@ pytest -q
 
 ## 8. 当前已知限制
 
-- `button` / `light` 实体在平台初始化时创建，设备或场景动态增减不会自动重建实体。
-- 调光灯（`light_dimmer`）已接入亮度控制；普通灯仍为开/关模式。
+- 实体在平台初始化时创建，设备或场景动态增减不会自动重建实体（重启 HA 后生效）。
+- 调光灯（`light_dimmer`）已接入亮度控制；普通灯仍为开/关模式。`r153` 面板仅在带 `PANEL_STATE` 时视为调光灯。
+- 空调：关机状态下网关不接受单独修改温度/风速（`climate` 中会提示先开机）；多联机同一外机下的内机须同为制冷或制热，模式冲突时会被系统拉回。
+- 空调设置下发后 0.2~5 秒才回推新状态，`climate` 在此期间显示请求值（最长 10 秒）。
+- 窗帘位置：网关 0 = 全开、100 = 全关，`cover` 中已换算为 HA 约定（100 = 全开）。
+- 未接入：地暖、新风、干触点；空调扫风与背光。
 - 协议字段映射依赖网关返回格式，不同固件可能需要适配。
 
 ---

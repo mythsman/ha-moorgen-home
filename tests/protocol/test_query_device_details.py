@@ -146,3 +146,40 @@ def test_query_device_details_infer_device_type_matrix():
     }
 
     assert actual == expected
+
+
+def _device_list_packet(macs: list[int], last: bool) -> bytes:
+    fields = [{"type": 15, "value": 4}, {"type": 17, "value": len(macs)}]
+    for mac in macs:
+        fields += [
+            {"type": 4, "value": mac},
+            {"type": 6, "value": f"dev-{mac & 0xFF}"},
+            {"type": 11, "value": 0},
+        ]
+    if last:
+        fields.append({"type": 148, "value": 1})
+    return build_protocol_packet(0x23, "dooyashcp", 1, 3, 8, 0, fields)
+
+
+def test_query_device_details_multi_packet_response_merges_until_data_over():
+    data = {"devices": []}
+    first = parse_protocol_packet(_device_list_packet([0x1101, 0x1102], last=False))
+    second = parse_protocol_packet(_device_list_packet([0x1103], last=False))
+    final = parse_protocol_packet(_device_list_packet([0x1104], last=True))
+
+    assert route(first, data) is None
+    assert route(second, data) is None
+    assert data["devices"] == []
+
+    assert route(final, data) == "devices"
+    assert [d["Device_Mac"] for d in data["devices"]] == [0x1101, 0x1102, 0x1103, 0x1104]
+    assert "_pending_devices" not in data
+
+
+def test_query_device_details_infer_r153_without_panel_state_is_panel():
+    assert infer_device_type({"Device_Desc": b"dooyar0200r153\x300", "Device_Name": "x"}) == "panel"
+    assert (
+        infer_device_type({"Device_Desc": b"dooyar0100r153\x800", "PANEL_STATE": 65280})
+        == "light_dimmer"
+    )
+    assert infer_device_type({"Device_Desc": b"dooyar0300c140\x100"}) == "curtain"

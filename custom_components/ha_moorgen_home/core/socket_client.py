@@ -3,7 +3,12 @@ import logging
 from collections.abc import Callable
 from contextlib import suppress
 
-from .protocol.codec import parse_protocol_packet, route
+from .protocol.codec import (
+    build_heartbeat_ack,
+    is_heartbeat_ping,
+    parse_protocol_packet,
+    route,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -142,8 +147,9 @@ class AsyncSocketClient:
             self._cooldown_until = 0.0
 
     async def _connect_once(self):
-        _LOGGER.info(f"Connecting to {self.host}:{self.port}")
+        _LOGGER.info("Connecting to %s:%s", self.host, self.port)
         self._reader, self._writer = await asyncio.open_connection(self.host, self.port)
+        self.data.pop("_pending_devices", None)
         self._connected = True
         self._connected_event.set()
         _LOGGER.info("Connected to server")
@@ -199,6 +205,9 @@ class AsyncSocketClient:
 
                 try:
                     data_packet = parse_protocol_packet(pkt)
+                    if is_heartbeat_ping(data_packet):
+                        await self._send_raw(build_heartbeat_ack(pkt))
+                        continue
                     if (
                         data_packet.proto_num == 1
                         and data_packet.proto_type == 5
@@ -221,6 +230,12 @@ class AsyncSocketClient:
                         pkt.hex(),
                     )
 
+    async def _send_raw(self, data: bytes):
+        async with self._lock:
+            if self._writer:
+                self._writer.write(data)
+                await self._writer.drain()
+
     async def send_command(self, data: bytes):
         """Send raw bytes to the server."""
         self._ensure_not_in_cooldown()
@@ -230,4 +245,4 @@ class AsyncSocketClient:
                 raise ConnectionError("Not connected, cannot send data")
             self._writer.write(data)
             await self._writer.drain()
-            _LOGGER.info(f"[TX] Sent: {data.hex()}")
+            _LOGGER.info("[TX] Sent: %s", data.hex())

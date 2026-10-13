@@ -4,14 +4,14 @@ from .const import COORDINATOR, DOMAIN
 from .core.coordinator import MoorgenDataCoordinator
 
 _LOGGER = logging.getLogger(__name__)
-PLATFORMS = ["button", "light"]
+PLATFORMS = ["button", "climate", "cover", "light", "sensor"]
 
 
 async def async_setup_entry(hass, config_entry):
     if DOMAIN not in hass.data:
         hass.data[DOMAIN] = {}
 
-    _LOGGER.info(f"config entry is {config_entry.data}")
+    _LOGGER.info("config entry is %s", config_entry.data)
     coordinator = MoorgenDataCoordinator(hass, config_entry)
 
     await coordinator.async_config_entry_first_refresh()

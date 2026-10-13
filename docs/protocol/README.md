@@ -11,7 +11,10 @@
 | 控制设备开关（device cmd） | `control_device.md` | 4 / 5 / 6 | 9 / 12 / 13 / 14 | `16=1`, `4(device_mac)`, `9(light-on/off)`, 推送`11` | req + push + keepalive | 待补 | `tests/protocol/test_control_device.py` |
 | 控制设备调光（dimming） | `control_device_dimming.md` | 4 / 5 / 6 | 9 / 12 / 13 / 14 | `16=1`, `4(device_mac)`, `9=random-light-dimming`, `10=brightness`, 推送`151` | req + push + keepalive | 待补 | `tests/protocol/test_control_device_dimming.py` |
 | 查询房间信息 | `query_room_info.md` | 3 | 7 / 8 | `15=11/12`, `53`, `48`, `54`, `55`, `148` | req/rsp | `MainAction.get_Byte_Data_Req` | `tests/protocol/test_query_room_info.py` |
-| 查询设备详情 | `query_device_details.md` | 3 | 7 / 8 | `15=1/4`, `17`, `4`, `6`, `48` | req/rsp | `MainAction.get_Byte_Data_Req` | `tests/protocol/test_query_device_details.py` |
+| 查询设备详情 | `query_device_details.md` | 3 | 7 / 8 | `15=1/4`, `17`, `4`, `6`, `48`, `148` | req/rsp（多包） | `MainAction.get_Byte_Data_Req` | `tests/protocol/test_query_device_details.py` |
+| 控制空调（a170） | `control_aircon.md` | 4 / 5 | 9 / 12 | `16=1`, `4`, `9=aircon-*`, `10`（scne-exec 3 字节） | req + push | `CmdTools$AirConditonCmd`, `CmdUtils#doGetAirconSceneCmd` | `tests/protocol/test_control_aircon.py` |
+| 控制窗帘（c140） | `control_curtain.md` | 4 / 5 | 9 / 12 | `16=1`, `4`, `9=curtain-*`, `10`（point 1 字节） | req + push | `CmdTools$MotoCmd`, `StatusUtils#isMoto*` | `tests/protocol/test_control_curtain.py` |
+| 心跳保活 | `keepalive.md` | 6 | 13 / 14 | 无 TLV | ping + ack | — | `tests/protocol/test_keepalive.py` |
 
 ## 状态说明
 
@@ -26,7 +29,10 @@
 - 控制设备开关（证据等级：中，抓包已验证）
 - 控制设备调光（证据等级：中，抓包已验证）
 - 查询房间信息（证据等级：高）
-- 查询设备详情（证据等级：高）
+- 查询设备详情（证据等级：高；含多包合并）
+- 控制空调（证据等级：中，APK + 实机验证）
+- 控制窗帘（证据等级：中，APK + 实机验证）
+- 心跳保活（证据等级：中，抓包 + 实机对照实验）
 
 ## 维护规则
 

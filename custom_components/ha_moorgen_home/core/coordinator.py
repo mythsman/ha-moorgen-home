@@ -6,8 +6,10 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .protocol.commands import (
     activate_scene,
+    aircon_set_state,
     control_device,
     control_device_dimming,
+    curtain_set_position,
     query_device_details,
     query_room_info,
     query_scene_details,
@@ -67,6 +69,36 @@ class MoorgenDataCoordinator(DataUpdateCoordinator):
         _LOGGER.info("turn off device %s", device_mac)
         await self.client.wait_until_connected(timeout=5)
         await self.client.send_command(control_device(device_mac, "light-off"))
+        self._refresh_scheduler.schedule_post_operation()
+
+    async def set_aircon_power(self, device_mac: int, turn_on: bool):
+        # Explicit, idempotent power commands (aircon-reverse-exe is the toggle).
+        cmd = "aircon-power-on" if turn_on else "aircon-power-off"
+        _LOGGER.info("aircon %s %s", device_mac, cmd)
+        await self.client.wait_until_connected(timeout=5)
+        await self.client.send_command(control_device(device_mac, cmd))
+        self._refresh_scheduler.schedule_post_operation()
+
+    async def set_aircon_state(self, device_mac: int, mode: str, fan: str, temperature: float):
+        # aircon-scne-exec only takes effect with the power-on flag, so this also turns the unit on.
+        _LOGGER.info(
+            "aircon %s set mode=%s fan=%s temperature=%s", device_mac, mode, fan, temperature
+        )
+        await self.client.wait_until_connected(timeout=5)
+        await self.client.send_command(aircon_set_state(device_mac, True, mode, fan, temperature))
+        self._refresh_scheduler.schedule_post_operation()
+
+    async def curtain_command(self, device_mac: int, cmd: str):
+        # cmd: curtain-up (open), curtain-down (close), curtain-stop
+        _LOGGER.info("curtain %s %s", device_mac, cmd)
+        await self.client.wait_until_connected(timeout=5)
+        await self.client.send_command(control_device(device_mac, cmd))
+        self._refresh_scheduler.schedule_post_operation()
+
+    async def set_curtain_position(self, device_mac: int, gateway_position: int):
+        _LOGGER.info("curtain %s move to %s", device_mac, gateway_position)
+        await self.client.wait_until_connected(timeout=5)
+        await self.client.send_command(curtain_set_position(device_mac, gateway_position))
         self._refresh_scheduler.schedule_post_operation()
 
     async def set_device_brightness(self, device_mac: int, level: int):
@@ -156,8 +188,9 @@ class MoorgenDataCoordinator(DataUpdateCoordinator):
             _LOGGER.warning("data refresh timeout: %r", ex)
             return self.client.data
         except ConnectionError as ex:
-            _LOGGER.info("skip refresh while disconnected: %s", ex)
-            return self.client.data
+            # Mark entities unavailable instead of silently serving stale state.
+            _LOGGER.warning("gateway unreachable: %s", ex)
+            raise UpdateFailed(f"Moorgen gateway unreachable: {ex}") from ex
         except Exception as ex:
             _LOGGER.warning("async update failed: %r", ex)
-            raise UpdateFailed(f"Error fetching lights data: {ex!r}") from ex
+            raise UpdateFailed(f"Error fetching Moorgen data: {ex!r}") from ex

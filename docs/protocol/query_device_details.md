@@ -104,3 +104,32 @@ public byte[] get_Byte_Data_Req(int i2) {
 3. **类型推断断言**
    - 使用 `infer_device_type()` 对 47 个设备逐条推断。
    - 断言设备名到类型的映射与预期一致。
+
+
+## 附录 A. 多包响应（REQUEST_DATA_OVER）
+
+设备较多时，网关把设备详情拆成多个 `3/8`（`15=4`）响应包连续下发：
+
+- 每个包带 `DeviceCount(17)` 表示本包设备数；
+- **只有最后一个包带 `REQUEST_DATA_OVER(148)=1`**。
+
+实测样例（88 个设备）：11 个包，设备数依次为 40、3、3、3、3、3、3、3、4、20、3，最后一个包带 `148`。
+
+旧实现每收到一个包就覆盖设备列表，最终只保留最后一个包里的设备。现实现（`codec.route`）将各包暂存于 `_pending_devices`，收到 `148` 后一次性替换设备列表；重新连接时清空暂存。
+
+单测：`test_query_device_details_multi_packet_response_merges_until_data_over`。
+
+## 附录 B. 设备类型与房间
+
+`Device_Desc` 形如 `dooya` + 房间 ID（5 字符，如 `r0300`）+ 类型码，房间 ID 与 `query_room_info` 中的房间 ID 对应。
+
+| 类型码 | 类型 | 说明 |
+|---|---|---|
+| `l110` | 灯（开关） | |
+| `r153` | 墙面面板 | 仅当带 `PANEL_STATE(151)` 时视为调光灯，否则为面板（不生成灯实体） |
+| `c140` | 窗帘电机 | 见 `control_curtain.md` |
+| `a170` | 空调内机 | 见 `control_aircon.md` |
+| `d110` | 干触点 | 未接入 |
+| `h110` / `a160` / `a110` | 地暖 / 新风 / 暖通组 | 未接入 |
+
+单测：`test_query_device_details_infer_r153_without_panel_state_is_panel`。

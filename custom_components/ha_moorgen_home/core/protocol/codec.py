@@ -89,7 +89,9 @@ def build_protocol_packet(msgFlag, protoName, protoNum, protoType, linkCode, ser
 
         # Convert value based on type
         value = item["value"]
-        if tdesc["type"] == "string":
+        if isinstance(value, (bytes, bytearray)):
+            value_bytes = bytes(value)
+        elif tdesc["type"] == "string":
             if not isinstance(value, str):
                 value = str(value)
             value_bytes = value.encode("utf-8")
@@ -126,8 +128,22 @@ def build_protocol_packet(msgFlag, protoName, protoNum, protoType, linkCode, ser
     return bytes(packet)
 
 
+def is_heartbeat_ping(packet: DataPacket) -> bool:
+    return packet.proto_type == 6 and packet.link_code == 13
+
+
+def build_heartbeat_ack(ping: bytes) -> bytes:
+    """Echo a gateway ping (proto_type=6, link_code=13) back as link_code=14.
+
+    The gateway pings every ~10s and drops the socket after ~60s without a reply.
+    """
+    ack = bytearray(ping)
+    ack[14] = 14
+    return bytes(ack)
+
+
 def route(packet: DataPacket, data_dict: dict):
-    _LOGGER.info(f"packet come {packet.proto_num} {packet.proto_type} {packet.link_code}")
+    _LOGGER.info("packet come %s %s %s", packet.proto_num, packet.proto_type, packet.link_code)
 
     if packet.proto_num == 1 and packet.proto_type == 3 and packet.link_code == 8:
         datareq_field = next((f for f in packet.fields if f.id == 15), None)
@@ -142,7 +158,13 @@ def route(packet: DataPacket, data_dict: dict):
                 data_dict["rooms"] = rooms
                 return "rooms"
             if datareq_type == 4:
-                devices = parse_device_info(packet)
+                # Large device lists are split across several packets; only the
+                # last one carries REQUEST_DATA_OVER(148). Buffer until then.
+                pending = data_dict.setdefault("_pending_devices", [])
+                pending.extend(parse_device_info(packet))
+                if not any(f.id == 148 for f in packet.fields):
+                    return None
+                devices = data_dict.pop("_pending_devices")
                 if devices != data_dict.get("devices", []):
                     _LOGGER.info("device info updated, count=%s", len(devices))
                 else:
@@ -197,7 +219,8 @@ def infer_device_type(device: dict) -> str:
     name = str(device.get("Device_Name", ""))
 
     if "r153" in desc:
-        return "light_dimmer"
+        # r153 is a wall panel; only panels reporting PANEL_STATE(151) carry a dimmable load.
+        return "light_dimmer" if "PANEL_STATE" in device else "panel"
     if "l110" in desc:
         return "light"
     if "h110" in desc:
@@ -208,6 +231,10 @@ def infer_device_type(device: dict) -> str:
         return "air_conditioner"
     if "a110" in desc:
         return "hvac_group"
+    if "c140" in desc:
+        return "curtain"
+    if "d110" in desc:
+        return "dry_contact"
 
     # Fallback for partial device records that may miss Device_Desc in some samples.
     if any(k in name for k in ("面板",)):
@@ -222,6 +249,47 @@ def infer_device_type(device: dict) -> str:
         return "light"
 
     return "unknown"
+
+
+# a170 Device_CmdData byte0, decoded by switching modes/fan speeds on a wall panel.
+AIRCON_MODES = {0x20: "cool", 0x60: "fan_only", 0x80: "heat"}
+AIRCON_FAN_SPEEDS = {0x00: "auto", 0x08: "low", 0x10: "medium", 0x18: "high"}
+
+
+def _aircon_cmd_data(device: dict) -> bytes | None:
+    raw = device.get("Device_CmdData")
+    if isinstance(raw, str):
+        raw = raw.encode("utf-8")
+    if not isinstance(raw, (bytes, bytearray)) or len(raw) < 3:
+        return None
+    return bytes(raw)
+
+
+def aircon_temperatures(device: dict) -> tuple[float, float] | None:
+    """(setpoint, room temperature) from an a170 Device_CmdData.
+
+    Layout observed from panel operations: [mode|fan, setpoint*2, room_temp*10, ?].
+    """
+    raw = _aircon_cmd_data(device)
+    if raw is None:
+        return None
+    return raw[1] / 2, raw[2] / 10
+
+
+def aircon_mode_and_fan(device: dict) -> tuple[str | None, str | None]:
+    """Panel mode (cool/fan_only/heat) and fan speed (auto/low/medium/high)."""
+    raw = _aircon_cmd_data(device)
+    if raw is None:
+        return None, None
+    return AIRCON_MODES.get(raw[0] & 0xE0), AIRCON_FAN_SPEEDS.get(raw[0] & 0x18)
+
+
+def device_room_id(device: dict) -> str | None:
+    """Room id embedded in Device_Desc, e.g. b'dooyar0300l110..' -> 'r0300'."""
+    desc = _normalize_desc_text(device.get("Device_Desc", ""))
+    if desc.startswith("dooya") and len(desc) >= 10:
+        return desc[5:10]
+    return None
 
 
 def parse_device_info(packet: DataPacket):
